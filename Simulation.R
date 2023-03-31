@@ -1,7 +1,7 @@
 # # Estimating the probability of causation for the RCT described (and with data) here 
 # # https://www.povertyactionlab.org/evaluation/cleaning-springs-kenya
 
- # rm(list=ls())
+rm(list=ls())
 
 
 # -----------------------
@@ -120,7 +120,9 @@ pcausation = function(y, a, x, xtest, nsplits=2, start.list=c(rep(0,ncol(x))), t
   # estimating nuisance parameters: propensity score and outcome regressions
   pbcount <- 0
   for (i in 1:n.avals){
-    if (i==1){ Sys.sleep(0.1); if(showprogress==TRUE){setTxtProgressBar(pb,pbcount); pbcount <- pbcount+1 }}
+    if (i==1){ 
+      #Sys.sleep(0.1); 
+      if(showprogress==TRUE){setTxtProgressBar(pb,pbcount); pbcount <- pbcount+1 }}
     
     # starting cross validation
     for (vfold in 1:nsplits){
@@ -132,29 +134,49 @@ pcausation = function(y, a, x, xtest, nsplits=2, start.list=c(rep(0,ncol(x))), t
       # estimate propensity score (pi)
       if (i != n.avals){
         
-        pifit.xtest <- SuperLearner(as.numeric(a==avals[i])[train],as.data.frame(x[train,]),
-                                    newX=xtest, SL.library=sl.lib, family=binomial)
+        pifit.sl <- SuperLearner(as.numeric(a==avals[i])[train],as.data.frame(x[train,]),
+                                 SL.library=sl.lib, family=binomial)
         
-        pihat.xtest <- as.numeric(pifit.xtest$SL.predict) # evaluated at pre-selected set of x's 
+        pifit.xtest <- predict(pifit.sl, xtest)
+        pifit.x <- predict(pifit.sl,x)
         
-        Sys.sleep(0.1)
+        pihat.xtest <- pifit.xtest$pred # evaluated at pre-selected set of x's
+        pihat <- pifit.x$pred
+        
+        
+        # pifit.xtest <- SuperLearner(as.numeric(a==avals[i])[train],as.data.frame(x[train,]),
+        #                             newX=xtest, SL.library=sl.lib, family=binomial)
+        # 
+        # pihat.xtest <- as.numeric(pifit.xtest$SL.predict) # evaluated at pre-selected set of x's 
+        # 
+        
+        #Sys.sleep(0.1)
         if(showprogress==TRUE){ setTxtProgressBar(pb,pbcount); pbcount <- pbcount+1 }
       }
       
     }
     
     # estimate outcome regression function (mu), one for each value of a
-    mufit.xtest <- SuperLearner(y[a==avals[i] & train],
-                                as.data.frame(x[a==avals[i] & train,]),
-                                newX=xtest, SL.library=sl.lib)
+    mufit.sl <- SuperLearner(y[a==avals[i] & train],
+                             as.data.frame(x[a==avals[i] & train,]),
+                             SL.library=sl.lib, family=binomial)
+    mufit.xtest <- predict(mufit.sl, xtest)
+    mufit.x <- predict(mufit.sl,x)
     
-    muhat.xtest[,i] <- mufit.xtest$SL.predict # evaluated at pre-selected set of x's
+    muhat.xtest[,i] <- mufit.xtest$pred # evaluated at pre-selected set of x's
+    muhat[,i] <- mufit.x$pred
     
-    Sys.sleep(0.1)
+    # mufit.xtest <- SuperLearner(y[a==avals[i] & train],
+    #                             as.data.frame(x[a==avals[i] & train,]),
+    #                             newX=xtest, SL.library=sl.lib)
+    # 
+    # muhat.xtest[,i] <- mufit.xtest$SL.predict # evaluated at pre-selected set of x's
+    # 
+    #Sys.sleep(0.1)
     if(showprogress==TRUE){ setTxtProgressBar(pb,pbcount); pbcount <- pbcount+1 }
     
   }
-  if (i == n.avals){ pihat[,i] <- 1 - apply(pihat,1,sum, na.rm=T) }
+  #if (i == n.avals){ pihat[,i] <- 1 - apply(pihat,1,sum, na.rm=T) }
   
   # estimates of E{Y(0)} and E{Y(1)}
   names(muhat.xtest) <- c("a0", "a1")
@@ -171,15 +193,18 @@ pcausation = function(y, a, x, xtest, nsplits=2, start.list=c(rep(0,ncol(x))), t
   include.xb = diag(sapply( include.b, FUN=function(x, y) paste(x, include.x, sep="*") ))
   formula.x = paste("y ~ ", paste(include.x, collapse="+"), sep="")
   formula.pi = paste("a ~ ", paste(include.x, collapse="+"), sep="")
-  formula.nls.x = paste("y ~ expit(", paste(include.xb, collapse="+"), ")", sep = "")
+  formula.nls.x = paste("yif ~ expit(", paste(include.xb, collapse="+"), ")", sep = "")
   start.values = setNames(as.list(start.list), c(include.b))
-  ystar = (1/muhat.xtest[2])*((muhat.xtest[1]/muhat.xtest[2])*(1/pihat.xtest)*a*(y-muhat.xtest[2]) -
-                                (1/(1-pihat.xtest))*(1-a)*(y-muhat.xtest[1])) + (1 - muhat.xtest[1]/muhat.xtest[2])
-  ifvals <- ystar; names(ifvals) = "ystar"
+  # ystar = (1/muhat.xtest[2])*((muhat.xtest[1]/muhat.xtest[2])*(1/pihat.xtest)*a*(y-muhat.xtest[2]) -
+  #                               (1/(1-pihat.xtest))*(1-a)*(y-muhat.xtest[1])) + (1 - muhat.xtest[1]/muhat.xtest[2])
+  # ifvals <- ystar; names(ifvals) = "ystar"
+  yif = (1/muhat$a1)*((muhat$a0/muhat$a1)*(1/pihat)*a*(y-muhat$a1) -
+                        (1/(1-pihat))*(1-a)*(y-muhat$a0)) + (1 - muhat$a0/muhat$a1)
+  if.gamma.vals <- as.data.frame(yif); names(if.gamma.vals) = "yif"
   
   # fit nls model - gives NA if the NLS doesn't converge
   mod = tryCatch({
-    nls( as.formula(formula.nls.x), start=start.values, data=as.data.frame(cbind(x,y,a)), nls.control(maxiter = 500), algorithm = "port",
+    nls( as.formula(formula.nls.x), start=start.values, data=as.data.frame(cbind(x,yif,a)), nls.control(maxiter = 500), algorithm = "port",
         lower=c(rep(-5, length(include.x))), upper=c(rep(5, length(include.x))), trace = tracetf )
   }, warning = function(warning_condition) {
     mod <- NA
@@ -192,13 +217,13 @@ pcausation = function(y, a, x, xtest, nsplits=2, start.list=c(rep(0,ncol(x))), t
   xmat <- try( as.matrix(x) , silent = TRUE ); try( xtestmat <- as.matrix(xtest) , silent = TRUE )
   wts <- try( mod$weights , silent = TRUE ); try( if (is.null(wts)){ wts <- 1 } , silent = TRUE )
   bread <- try( solve( (t(xmat *(preds*(1-preds)*wts)) %*% xmat)/n ) , silent = TRUE )
-  meat <- try( (t(xmat *( ((y-preds) * wts)^2)) %*% xmat)/n , silent = TRUE )
+  meat <- try( (t(xmat *( ((as.vector(yif)-preds) * wts)^2)) %*% xmat)/n , silent = TRUE )
   vcov <- try( bread %*% meat %*% bread / n , silent = TRUE )
   coefs <- try( coef(mod) , silent = TRUE )
   res.betas <- tryCatch({ data.frame(Estimate=coefs, Robust.SE=sqrt(diag(vcov)), 
                           z.val=coefs/sqrt(diag(vcov)),	p.val= round(2*(1-pnorm(abs(coefs/sqrt(diag(vcov))))),3) , 
                           ci.ll= coefs-1.96*sqrt(diag(vcov)) , ci.ul=coefs+1.96*sqrt(diag(vcov)) )
-                          }, warning = function(warning_condition){ res.betas })
+                          }, warning = function(warning_condition){ res.betas <- NA })
   
   # get predicted value / CI for probability at specific x0
   x0 <- xtestmat
@@ -226,19 +251,19 @@ pcausation = function(y, a, x, xtest, nsplits=2, start.list=c(rep(0,ncol(x))), t
   
   res.pi <- data.frame( est.pc = est.pi )
   
-  Sys.sleep(0.1)
+  #Sys.sleep(0.1)
   if(showprogress==TRUE){ setTxtProgressBar(pb,pbcount) ; close(pb) }
   
   nuis <- as.data.frame(cbind(pihat.xtest,muhat.xtest))
   colnames(nuis) <- c("pihat", "mu0hat", "mu1hat")
   
   if(printres==TRUE){ print(res.if) }
-  return(invisible(list(res.if=res.if, res.pi=res.pi, nuis=nuis, ifvals=ifvals, res.coefs=res.coefs)))
+  return(invisible(list(res.if=res.if, res.pi=res.pi, nuis=nuis, yif=yif, res.coefs=res.coefs)))
   
 }
 
 # simulated data - this would be the researcher's data
-dat <- fun.dat.sim(n=500)
+dat <- fun.dat.sim(n=100)
 
 # evaluation data with multiple observations - this is for simulations, to evaluate at same X matrix at every iteration
 dat.eval <- fun.dat.sim(n=5)
